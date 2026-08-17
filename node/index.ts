@@ -22,7 +22,7 @@ const clients: ClientsConfig<Clients> = {
   },
 }
 
-export default new Service<Clients, State>({
+export default new Service({
   clients,
   routes: {
     orderTax: method({ POST: [orderTax] }),

@@ -3,6 +3,6 @@ import { Checkout } from './checkout'
 
 export class Clients extends IOClients {
   public get checkout() {
-    return this.getOrClient(Checkout)
+    return this.getOrSet('checkout', Checkout)
   }
 }

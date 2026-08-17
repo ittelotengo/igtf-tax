@@ -1,5 +1,7 @@
 import { json } from 'co-body'
 
+import { OrderFormPayment } from '../clients/checkout'
+
 /* =========================================================================
  * CONFIGURACIÓN  — revisá estos valores antes de desplegar
  * ========================================================================= */
@@ -62,7 +64,8 @@ export async function orderTax(ctx: Context) {
     const orderForm = await checkout.getOrderForm(payload.orderFormId)
     const payments = orderForm?.paymentData?.payments ?? []
     const isUsdPayment = payments.some(
-      p => p.paymentSystem != null && USD_PAYMENT_SYSTEMS.has(String(p.paymentSystem))
+      (p: OrderFormPayment) =>
+        p.paymentSystem != null && USD_PAYMENT_SYSTEMS.has(String(p.paymentSystem))
     )
 
     if (!isUsdPayment) {
