@@ -1,0 +1,37 @@
+{
+  "vendor": "telotengo",
+  "name": "igtf-tax",
+  "version": "0.1.0",
+  "title": "IGTF Tax Service",
+  "description": "Aplica 3% de IGTF para pagos en divisas (Zelle/efectivo) a todo el carrito, incluidos items de otros sellers.",
+  "builders": {
+    "node": "7.x"
+  },
+  "scripts": {
+    "postreleasy": "vtex publish --verbose"
+  },
+  "dependencies": {},
+  "policies": [
+    {
+      "name": "outbound-access",
+      "attrs": {
+        "host": "telotengo.vtexcommercestable.com.br",
+        "path": "/api/checkout/*"
+      }
+    },
+    {
+      "name": "outbound-access",
+      "attrs": {
+        "host": "portal.vtexcommercestable.com.br",
+        "path": "/api/*"
+      }
+    }
+  ],
+  "billingOptions": {
+    "type": "free",
+    "availableCountries": [
+      "*"
+    ]
+  },
+  "$schema": "https://raw.githubusercontent.com/vtex/node-vtex-api/master/gen/manifest.schema"
+}

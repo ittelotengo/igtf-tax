@@ -1,0 +1,18 @@
+{
+  "memory": 256,
+  "ttl": 10,
+  "timeout": 4,
+  "minReplicas": 2,
+  "maxReplicas": 8,
+  "workers": 2,
+  "routes": {
+    "orderTax": {
+      "path": "/_v/igtf/order-tax",
+      "public": true
+    },
+    "configure": {
+      "path": "/_v/igtf/configure",
+      "public": true
+    }
+  }
+}
