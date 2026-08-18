@@ -12,16 +12,8 @@ const IGTF_RATE = 0.03
 const IGTF_NAME = 'IGTF'
 const IGTF_DESCRIPTION = 'Impuesto a las Grandes Transacciones Financieras (pago en divisas)'
 
-// paymentSystem IDs que disparan el IGTF (Zelle y efectivo).
-// >>> IMPRESCINDIBLE: reemplazá 'XX'/'YY' por los IDs reales.
-// Los obtenés inspeccionando un orderForm real con esos métodos seleccionados,
-// en orderForm.paymentData.payments[].paymentSystem
-const USD_PAYMENT_SYSTEMS = new Set<string>(['Zelle', 'Efectivo'])
+const USD_PAYMENT_SYSTEMS = new Set<string>(['201', '204'])
 
-// ¿El IGTF incluye la comisión por servicio en su base?
-// El requisito era: IGTF sobre (productos + delivery + comisión).
-// Si la comisión es un 3% fijo del neto de productos, la calculamos aquí para
-// meterla en la base. Si tu comisión se calcula de otra forma, ajustá esto.
 const INCLUDE_COMMISSION_IN_BASE = true
 const COMMISSION_RATE = 0.03
 

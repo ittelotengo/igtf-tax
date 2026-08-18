@@ -2099,7 +2099,7 @@ side-channel@^1.1.1:
     side-channel-map "^1.0.1"
     side-channel-weakmap "^1.0.2"
 
-"stats-lite@github:vtex/node-stats-lite#v2.2.1":
+stats-lite@vtex/node-stats-lite#v2.2.1:
   version "2.2.1"
   resolved "https://codeload.github.com/vtex/node-stats-lite/tar.gz/a0b5ee91861f31b6ec845146b4906faf5172c430"
   dependencies:

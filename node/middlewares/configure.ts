@@ -15,6 +15,7 @@ export async function configure(ctx: Context) {
 
   const isDeactivate = ctx.req.method === 'DELETE'
 
+  console.log(account);
   // URL pública de tu ruta de cálculo. Ajustá el workspace si probás en uno
   // que no sea master (ej: https://{workspace}--{account}.myvtex.com/...).
   const taxUrl = `https://dev1--${account}.myvtex.com/_v/igtf/order-tax`
