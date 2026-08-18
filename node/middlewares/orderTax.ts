@@ -3,17 +3,17 @@ import { json } from 'co-body'
 import { OrderFormPayment } from '../clients/checkout'
 
 /* =========================================================================
- * CONFIGURACIÓN  — revisá estos valores antes de desplegar
+ * CONFIGURACIÓN
  * ========================================================================= */
 
-// Tasa del IGTF
 const IGTF_RATE = 0.03
-
 const IGTF_NAME = 'IGTF'
 const IGTF_DESCRIPTION = 'Impuesto a las Grandes Transacciones Financieras (pago en divisas)'
 
-const USD_PAYMENT_SYSTEMS = new Set<string>(['201', '204'])
+// paymentSystem IDs que disparan el IGTF (Zelle=201, agregá Efectivo cuando lo tengas)
+const USD_PAYMENT_SYSTEMS = new Set<string>(['201','204'])
 
+// IGTF sobre (productos + delivery + comisión)
 const INCLUDE_COMMISSION_IN_BASE = true
 const COMMISSION_RATE = 0.03
 
@@ -21,44 +21,77 @@ const COMMISSION_RATE = 0.03
 
 interface TaxItem {
   id: string
-  // OJO: confirmá el nombre real del campo de precio inspeccionando un request
-  // real (logueá el payload). Suele venir alguno de estos:
   itemPrice?: number
   sellingPrice?: number
   quantity?: number
 }
 
 interface TaxTotal {
-  id: string // 'Items' | 'Discounts' | 'Shipping' | ...
+  id: string
   name?: string
   value: number
 }
 
+/**
+ * Handler del Tax Protocol. REGLA DE ORO: pase lo que pase, responder 200.
+ * Un 500 acá rompe el checkout entero. Todo está envuelto: si algo falla,
+ * devolvemos itemTaxResponse vacío (sin IGTF) pero con status 200.
+ */
 export async function orderTax(ctx: Context) {
-  const {
-    clients: { checkout },
-    vtex: { logger },
-  } = ctx
+  const { clients: { checkout }, vtex: { logger } } = ctx
 
-  const payload = await json(ctx.req)
-  const items: TaxItem[] = payload?.items ?? []
-  const totals: TaxTotal[] = payload?.totals ?? []
-
-  // Respuesta por defecto: SIN impuesto. Es un fail-safe: si algo falla,
-  // preferimos no cobrar IGTF antes que romper el checkout (timeout de 5s,
-  // sin reintento). Perder el recargo en un caso raro es mejor que bloquear.
-  const noTax = {
-    itemTaxResponse: items.map(it => ({ id: it.id, taxes: [] as unknown[] })),
-  }
+  // Fallback global. Si no logramos ni parsear items, devolvemos vacío total.
+  let items: TaxItem[] = []
 
   try {
-    // 1) Leer el método de pago seleccionado (no viene en el payload del tax).
-    const orderForm = await checkout.getOrderForm(payload.orderFormId)
-    const payments = orderForm?.paymentData?.payments ?? []
-    const isUsdPayment = payments.some(
-      (p: OrderFormPayment) =>
-        p.paymentSystem != null && USD_PAYMENT_SYSTEMS.has(String(p.paymentSystem))
-    )
+    // --- Parseo defensivo del body (ACÁ solía reventar en 500) ---
+    let payload: any = {}
+    try {
+      payload = (ctx.req as any).body ?? (await json(ctx.req))
+    } catch (parseErr) {
+      logger.error({ message: 'IGTF: no pude parsear el body', error: (parseErr as Error)?.message })
+      ctx.status = 200
+      ctx.body = { itemTaxResponse: [] }
+      return
+    }
+
+    // LOG DEL PAYLOAD REAL: para ver qué manda Checkout (id, unidad, campos).
+    // Quitá o bajá a debug una vez validado.
+    logger.info({
+      message: 'IGTF: request recibido',
+      orderFormId: payload?.orderFormId,
+      itemsSample: JSON.stringify((payload?.items ?? []).slice(0, 2)),
+      totals: JSON.stringify(payload?.totals ?? []),
+    })
+
+    items = Array.isArray(payload?.items) ? payload.items : []
+    const totals: TaxTotal[] = Array.isArray(payload?.totals) ? payload.totals : []
+
+    const noTax = { itemTaxResponse: items.map(it => ({ id: it.id, taxes: [] as unknown[] })) }
+
+    // Sin orderFormId no podemos leer el método de pago -> sin IGTF.
+    if (!payload?.orderFormId) {
+      ctx.status = 200
+      ctx.body = noTax
+      return
+    }
+
+    // 1) Método de pago (no viene en el payload; lo leemos del orderForm).
+    let isUsdPayment = false
+    try {
+      const orderForm = await checkout.getOrderForm(payload.orderFormId)
+      const payments = orderForm?.paymentData?.payments ?? []
+      isUsdPayment = payments.some(
+        (p: OrderFormPayment) =>
+          p.paymentSystem != null && USD_PAYMENT_SYSTEMS.has(String(p.paymentSystem))
+      )
+    } catch (ofErr) {
+      // Si falla la lectura del orderForm, NO reventamos: sin IGTF y seguimos.
+      logger.error({ message: 'IGTF: getOrderForm falló', error: (ofErr as Error)?.message })
+      ctx.status = 200
+      ctx.body = noTax
+      return
+    }
 
     if (!isUsdPayment) {
       ctx.status = 200
@@ -66,66 +99,45 @@ export async function orderTax(ctx: Context) {
       return
     }
 
-    // 2) Base del IGTF = productos (neto de descuentos) + envío + comisión.
+    // 2) Base = productos (neto de descuentos) + envío + comisión.
     const byId = totals.reduce<Record<string, number>>((acc, t) => {
-      acc[t.id] = t.value
+      if (t && typeof t.id === 'string') acc[t.id] = Number(t.value) || 0
       return acc
     }, {})
 
     const itemsTotal = byId.Items ?? 0
-    const discounts = byId.Discounts ?? 0 // ya viene en negativo
+    const discounts = byId.Discounts ?? 0
     const shipping = byId.Shipping ?? 0
     const productsNet = itemsTotal + discounts
-
-    const commission = INCLUDE_COMMISSION_IN_BASE
-      ? productsNet * COMMISSION_RATE
-      : 0
-
+    const commission = INCLUDE_COMMISSION_IN_BASE ? productsNet * COMMISSION_RATE : 0
     const base = productsNet + shipping + commission
     const igtfTotal = round2(base * IGTF_RATE)
 
-    if (igtfTotal <= 0) {
+    if (igtfTotal <= 0 || items.length === 0) {
       ctx.status = 200
       ctx.body = noTax
       return
     }
 
-    // 3) El Tax Protocol sólo devuelve impuestos POR ÍTEM. Como el IGTF también
-    //    grava envío y comisión (que no son items), prorrateamos el total del
-    //    IGTF entre los items. El monto total cobrado queda exacto; sólo la
-    //    atribución por línea es proporcional.
     const itemTaxResponse = prorate(items, igtfTotal)
-
-    logger.info({
-      message: 'IGTF applied',
-      orderFormId: payload.orderFormId,
-      base,
-      igtfTotal,
-    })
+    logger.info({ message: 'IGTF aplicado', orderFormId: payload.orderFormId, base, igtfTotal })
 
     ctx.status = 200
     ctx.body = { itemTaxResponse }
   } catch (err) {
-    logger.error({
-      message: 'IGTF calculation failed — returning no tax (fail-safe)',
-      error: (err as Error)?.message,
-      orderFormId: payload?.orderFormId,
-    })
+    // Red de seguridad final: cualquier cosa no prevista -> 200 sin IGTF.
+    logger.error({ message: 'IGTF: error inesperado (fail-safe)', error: (err as Error)?.message })
     ctx.status = 200
-    ctx.body = noTax
+    ctx.body = { itemTaxResponse: items.map(it => ({ id: it.id, taxes: [] as unknown[] })) }
   }
 }
 
 function lineValue(it: TaxItem): number {
   const price = it.itemPrice ?? it.sellingPrice ?? 0
   const qty = it.quantity ?? 1
-  return price * qty
+  return (Number(price) || 0) * (Number(qty) || 1)
 }
 
-/**
- * Reparte igtfTotal entre los items en proporción a su valor.
- * Corrige el arrastre de redondeo en el último item para que la suma sea exacta.
- */
 function prorate(items: TaxItem[], igtfTotal: number) {
   const values = items.map(lineValue)
   const sum = values.reduce((a, b) => a + b, 0)
@@ -134,31 +146,19 @@ function prorate(items: TaxItem[], igtfTotal: number) {
   return items.map((it, i) => {
     const isLast = i === items.length - 1
     let share: number
-
-    if (isLast) {
-      share = round2(igtfTotal - allocated)
-    } else if (sum > 0) {
-      share = round2((values[i] / sum) * igtfTotal)
-    } else {
-      share = round2(igtfTotal / items.length)
-    }
-
+    if (isLast) share = round2(igtfTotal - allocated)
+    else if (sum > 0) share = round2((values[i] / sum) * igtfTotal)
+    else share = round2(igtfTotal / items.length)
     allocated = round2(allocated + share)
-
     return {
       id: it.id,
-      taxes:
-        share > 0
-          ? [{ name: IGTF_NAME, description: IGTF_DESCRIPTION, value: share }]
-          : [],
+      taxes: share > 0
+        ? [{ name: IGTF_NAME, description: IGTF_DESCRIPTION, value: share }]
+        : [],
     }
   })
 }
 
-// OJO CON LA UNIDAD: derivamos todo de los propios valores del payload, así que
-// la salida sale en la misma unidad que la entrada. round2 sirve tanto si los
-// montos vienen en unidades de moneda (16.00) como si vienen enteros. Confirmá
-// la unidad logueando un request real y ajustá el redondeo si hiciera falta.
 function round2(n: number): number {
   return Math.round((n + Number.EPSILON) * 100) / 100
 }
