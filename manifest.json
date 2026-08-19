@@ -1,7 +1,7 @@
 {
   "vendor": "telotengo",
   "name": "igtf-tax",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "title": "IGTF Tax Service",
   "description": "Aplica 3% de IGTF para pagos en divisas (Zelle/efectivo) a todo el carrito, incluidos items de otros sellers.",
   "builders": {
