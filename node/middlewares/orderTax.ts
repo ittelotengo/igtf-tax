@@ -77,9 +77,19 @@ export async function orderTax(ctx: Context) {
     }
 
     // 1) Método de pago (no viene en el payload; lo leemos del orderForm).
+    // CARRERA CONTRA RELOJ: si getOrderForm tarda más de 1.8s, abortamos y
+    // devolvemos sin IGTF. Checkout corta a los ~5s con reintentos; nunca
+    // debemos ser nosotros los que colgamos la respuesta. Esta es la causa
+    // del "request-retry-fail": el getOrderForm se colgaba en el flujo real.
     let isUsdPayment = false
     try {
-      const orderForm = await checkout.getOrderForm(payload.orderFormId)
+      const timeout = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('getOrderForm timeout')), 1800)
+      )
+      const orderForm: any = await Promise.race([
+        checkout.getOrderForm(payload.orderFormId),
+        timeout,
+      ])
       const payments = orderForm?.paymentData?.payments ?? []
       isUsdPayment = payments.some(
         (p: OrderFormPayment) =>

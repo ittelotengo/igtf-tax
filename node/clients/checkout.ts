@@ -45,6 +45,9 @@ export class Checkout extends JanusClient {
   public getOrderForm = (orderFormId: string) =>
     this.http.get<OrderForm>(`/api/checkout/pub/orderForm/${orderFormId}`, {
       metric: 'igtf-get-orderform',
+      // Timeout corto: si el orderForm no responde rápido, abortamos y
+      // seguimos sin IGTF, para nunca colgar la respuesta al Checkout.
+      timeout: 1500,
     })
 
   public getOrderFormConfiguration = () =>
